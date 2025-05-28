@@ -3,7 +3,8 @@
 ## 実行手順
 
 ### テスト実行
-`npx @modelcontextprotocol/inspector node /Users/ryo.komesu/work/2025-05-29/mcp-server-with-auth/build/index.js`
+Full-Path-To-Your-Drectoryをご自分のディレクトリに修正して実行してください
+`npx @modelcontextprotocol/inspector node Full-Path-To-Your-Drectory/mcp-server-with-auth/build/index.js`
 
 ### サーバー実行
 `npm start`
