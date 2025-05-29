@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { isAuthenticated, authenticateWithPassword } from "./auth.js";
 
 const NWS_API_BASE = "https://api.weather.gov";
 const USER_AGENT = "weather-app/1.0";
@@ -28,6 +29,21 @@ async function makeNWSRequest<T>(url: string): Promise<T | null> {
     console.error("Error making NWS request:", error);
     return null;
   }
+}
+
+// Helper function to check authentication for tools
+function requireAuth() {
+  if (!isAuthenticated()) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: "Authentication required. Please authenticate first using the 'authenticate' tool.",
+        },
+      ],
+    };
+  }
+  return null;
 }
 
 interface AlertFeature {
@@ -78,11 +94,102 @@ interface ForecastResponse {
   };
 }
 
-// Register weather tools
+// Register authentication resource
+server.resource(
+  "auth-login",
+  "auth://login",
+  async (uri) => ({
+    contents: [{
+      uri: uri.href,
+      text: JSON.stringify({
+        description: "Authentication resource for Weather MCP Server",
+        instructions: "Use this resource to authenticate with email and password",
+        schema: {
+          email: "string (required)",
+          password: "string (required)"
+        },
+        example: {
+          email: "user@example.com",
+          password: "your-password"
+        }
+      }, null, 2)
+    }]
+  })
+);
+
+server.resource(
+  "auth-status",
+  "auth://status",
+  async (uri) => {
+    const authenticated = isAuthenticated();
+    return {
+      contents: [{
+        uri: uri.href,
+        text: JSON.stringify({
+          authenticated: authenticated,
+          message: authenticated 
+            ? "User is currently authenticated" 
+            : "User is not authenticated"
+        }, null, 2)
+      }]
+    };
+  }
+);
+
+// Add authentication tool
+server.tool(
+  "authenticate",
+  "Authenticate with email and password to access weather tools",
+  {
+    email: z.string().email().describe("User email address"),
+    password: z.string().min(1).describe("User password")
+  },
+  async ({ email, password }) => {
+    try {
+      const authResult = await authenticateWithPassword(email, password);
+      
+      if (authResult) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "Authentication successful! You can now access weather tools.",
+            },
+          ],
+        };
+      } else {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "Authentication failed. Please check your email and password.",
+            },
+          ],
+        };
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Authentication error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Register weather tools with authentication check
 server.tool(
   "get-alerts",
+  "Get weather alerts for a US state (requires authentication)",
   { state: z.string().length(2).describe("Two-letter state code (e.g. CA, NY)") },
   async ({ state }) => {
+    // Check authentication first
+    const authCheck = requireAuth();
+    if (authCheck) return authCheck;
+
     const stateCode = state.toUpperCase();
     const alertsUrl = `${NWS_API_BASE}/alerts?area=${stateCode}`;
     const alertsData = await makeNWSRequest<AlertsResponse>(alertsUrl);
@@ -91,7 +198,7 @@ server.tool(
       return {
         content: [
           {
-            type: "text",
+            type: "text" as const,
             text: "Failed to retrieve alerts data",
           },
         ],
@@ -103,7 +210,7 @@ server.tool(
       return {
         content: [
           {
-            type: "text",
+            type: "text" as const,
             text: `No active alerts for ${stateCode}`,
           },
         ],
@@ -116,7 +223,7 @@ server.tool(
     return {
       content: [
         {
-          type: "text",
+          type: "text" as const,
           text: alertsText,
         },
       ],
@@ -126,11 +233,16 @@ server.tool(
 
 server.tool(
   "get-forecast",
+  "Get weather forecast for a location by coordinates (requires authentication)",
   {
     latitude: z.number().min(-90).max(90).describe("Latitude of the location"),
     longitude: z.number().min(-180).max(180).describe("Longitude of the location"),
   },
   async ({ latitude, longitude }) => {
+    // Check authentication first
+    const authCheck = requireAuth();
+    if (authCheck) return authCheck;
+
     // Get grid point data
     const pointsUrl = `${NWS_API_BASE}/points/${latitude.toFixed(4)},${longitude.toFixed(4)}`;
     const pointsData = await makeNWSRequest<PointsResponse>(pointsUrl);
@@ -139,7 +251,7 @@ server.tool(
       return {
         content: [
           {
-            type: "text",
+            type: "text" as const,
             text: `Failed to retrieve grid point data for coordinates: ${latitude}, ${longitude}. This location may not be supported by the NWS API (only US locations are supported).`,
           },
         ],
@@ -151,7 +263,7 @@ server.tool(
       return {
         content: [
           {
-            type: "text",
+            type: "text" as const,
             text: "Failed to get forecast URL from grid point data",
           },
         ],
@@ -164,7 +276,7 @@ server.tool(
       return {
         content: [
           {
-            type: "text",
+            type: "text" as const,
             text: "Failed to retrieve forecast data",
           },
         ],
@@ -176,7 +288,7 @@ server.tool(
       return {
         content: [
           {
-            type: "text",
+            type: "text" as const,
             text: "No forecast periods available",
           },
         ],
@@ -199,7 +311,7 @@ server.tool(
     return {
       content: [
         {
-          type: "text",
+          type: "text" as const,
           text: forecastText,
         },
       ],
@@ -210,7 +322,7 @@ server.tool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Weather MCP Server running on stdio");
+  console.error("Weather MCP Server with Authentication running on stdio");
 }
 
 main().catch((error) => {
